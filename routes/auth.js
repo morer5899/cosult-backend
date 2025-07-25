@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import { OAuth2Client } from "google-auth-library";
-import express from "express"
+import express from "express";
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // Helper functions
@@ -10,8 +10,8 @@ const generateRandomPassword = () => {
   const chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   return Array.from({ length: 16 }, () =>
-    chars.charAt(Math.floor(Math.random() * chars.length)).join("")
-  );
+    chars.charAt(Math.floor(Math.random() * chars.length))
+  ).join("");
 };
 
 const sanitizeUser = (user) => {
@@ -21,7 +21,7 @@ const sanitizeUser = (user) => {
 };
 
 // Controller methods
- const register = async (req, res) => {
+const register = async (req, res) => {
   const { name, email, password, role, phone } = req.body;
 
   try {
@@ -78,7 +78,7 @@ const sanitizeUser = (user) => {
   }
 };
 
- const login = async (req, res) => {
+const login = async (req, res) => {
   const { email, password } = req.body;
 
   try {
@@ -95,13 +95,14 @@ const sanitizeUser = (user) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    // Check for Google auth users
-    if (user.isGoogleAuth) {
+    // --- MODIFIED: Allow manual login for Google users if password is set ---
+    // Only block if user is Google-auth only and has no valid password
+    if (user.isGoogleAuth && (!user.password || user.password.length < 6)) {
       return res.status(401).json({
-        message:
-          "This account uses Google Sign-In. Please use Google to login.",
+        message: "This account uses Google Sign-In. Please use Google to login.",
       });
     }
+    // ------------------------------------------------------------
 
     // Verify password
     const isMatch = await bcrypt.compare(password, user.password);
@@ -126,7 +127,7 @@ const sanitizeUser = (user) => {
   }
 };
 
- const googleAuth = async (req, res) => {
+const googleAuth = async (req, res) => {
   const { credential } = req.body;
 
   try {
@@ -193,7 +194,7 @@ const sanitizeUser = (user) => {
   }
 };
 
- const forgotPassword = async (req, res) => {
+const forgotPassword = async (req, res) => {
   const { email } = req.body;
 
   try {
@@ -231,7 +232,7 @@ const sanitizeUser = (user) => {
   }
 };
 
- const resetPassword = async (req, res) => {
+const resetPassword = async (req, res) => {
   const { token, newPassword } = req.body;
 
   try {
