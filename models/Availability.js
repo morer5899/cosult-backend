@@ -1,44 +1,40 @@
 import mongoose from "mongoose"
 
-const availabilitySchema = new mongoose.Schema({
-  consultantId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-  },
-  date: {
-    type: Date,
-    required: true,
-  },
-  slots: [
-    {
-      start: {
-        type: String, // e.g., "09:00"
-        required: true,
-      },
-      end: {
-        type: String, // e.g., "10:00"
-        required: true,
+const availabilitySchema = new mongoose.Schema(
+  {
+    consultantId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    dayOfWeek: {
+      type: String,
+      enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
+      required: true,
+    },
+    isAvailable: {
+      type: Boolean,
+      default: false,
+    },
+    startTime: {
+      type: String,
+      required: function () {
+        return this.isAvailable
       },
     },
-  ],
-  createdAt: {
-    type: Date,
-    default: Date.now,
+    endTime: {
+      type: String,
+      required: function () {
+        return this.isAvailable
+      },
+    },
   },
-})
+  {
+    timestamps: true,
+  },
+)
 
-// Add a compound unique index to ensure only one availability entry per consultant per day
-availabilitySchema.index({ consultantId: 1, date: 1 }, { unique: true })
+// Index for better query performance
+availabilitySchema.index({ consultantId: 1, dayOfWeek: 1 })
 
-// Check if the model already exists before defining it
-let Availability;
-if (mongoose.models.Availability) {
-  Availability = mongoose.models.Availability;
-  console.log("Mongoose: Availability model already exists.");
-} else {
-  Availability = mongoose.model("Availability", availabilitySchema);
-  console.log("Mongoose: Availability model defined for the first time.");
-}
-
-export default Availability
+export default mongoose.model("Availability", availabilitySchema)

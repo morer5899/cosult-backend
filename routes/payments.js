@@ -2,175 +2,228 @@ import express from "express"
 import Razorpay from "razorpay"
 import crypto from "crypto"
 import Payment from "../models/Payment.js"
-import Appointment from "../models/Appointment.js" // Assuming you have an Appointment model
+import Appointment from "../models/Appointment.js"
 import authMiddleware from "../middlewares/auth.js"
 import dotenv from "dotenv"
-
 dotenv.config()
 const router = express.Router()
 
-// Initialize Razorpay instance
+// Initialize Razorpay
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 })
 
-// @route   POST /api/payments/create-order
-// @desc    Create a new Razorpay order
-// @access  Private (client only)
+// Create payment order
 router.post("/create-order", authMiddleware, async (req, res) => {
-  const { amount, currency, receipt } = req.body;
-  let { appointmentId } = req.body;
-
-  // If it's a temporary ID, store it but don't validate as ObjectId
-  const isTempId = appointmentId.startsWith("temp_appointment_id_");
-  
-  if (!amount || !currency || !receipt || !appointmentId) {
-    return res.status(400).json({ message: "Missing required fields" });
-  }
-
   try {
+    const { appointmentId } = req.body
+
+    const appointment = await Appointment.findById(appointmentId).populate("consultantId", "name email")
+
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: "Appointment not found",
+      })
+    }
+
+    if (appointment.clientId.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized",
+      })
+    }
+
+    // Create Razorpay order
     const options = {
-      amount: amount,
-      currency: currency,
-      receipt: receipt,
-      payment_capture: 1,
-    };
-
-    const order = await razorpay.orders.create(options);
-
-    const newPayment = new Payment({
-      userId: req.user.id,
-      appointmentId: isTempId ? undefined : appointmentId, // Only store if it's a real ID
-      tempAppointmentId: isTempId ? appointmentId : undefined, // Store temp ID separately
-      razorpayOrderId: order.id,
-      amount: amount,
-      currency: currency,
-      status: "created",
-    });
-
-    await newPayment.save();
-
-    res.json({
-      orderId: order.id,
-      currency: order.currency,
-      amount: order.amount,
-      key_id: process.env.RAZORPAY_KEY_ID,
-    });
-  } catch (err) {
-    console.error("Error creating Razorpay order:", err);
-    res.status(500).json({ message: "Failed to create order", error: err.message });
-  }
-});
-
-
-// Verify payment endpoint
-router.post("/verify", authMiddleware, async (req, res) => {
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, appointmentId, amount } = req.body;
-
-  // Validate required fields
-  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !appointmentId || !amount) {
-    return res.status(400).json({ 
-      message: "Missing required fields",
-      required: ["razorpay_order_id", "razorpay_payment_id", "razorpay_signature", "appointmentId", "amount"]
-    });
-  }
-
-  try {
-    // 1. Verify signature
-    const body = razorpay_order_id + "|" + razorpay_payment_id;
-    const expectedSignature = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-      .update(body)
-      .digest("hex");
-
-    if (expectedSignature !== razorpay_signature) {
-      // Update payment status if exists
-      await Payment.findOneAndUpdate(
-        { razorpayOrderId: razorpay_order_id },
-        { status: "failed" }
-      ).catch(err => console.error("Failed to update payment status:", err));
-      
-      // Update appointment status
-      await Appointment.findByIdAndUpdate(appointmentId, {
-        status: "cancelled",
-        paymentStatus: "failed",
-      }).catch(err => console.error("Failed to update appointment status:", err));
-      
-      return res.status(400).json({ message: "Invalid signature" });
-    }
-
-    // 2. Find the existing payment record (created in create-order)
-    const existingPayment = await Payment.findOne({ razorpayOrderId: razorpay_order_id });
-    if (!existingPayment) {
-      return res.status(404).json({ message: "Payment record not found" });
-    }
-
-    // 3. Update payment record
-    const payment = await Payment.findByIdAndUpdate(
-      existingPayment._id,
-      {
-        razorpayPaymentId: razorpay_payment_id,
-        razorpaySignature: razorpay_signature,
-        status: "captured",
+      amount: Math.round(appointment.amount * 100), // Amount in paise
+      currency: "INR",
+      receipt: `appointment_${appointmentId}`,
+      notes: {
+        appointmentId: appointmentId,
+        clientId: req.user.id,
+        consultantId: appointment.consultantId._id.toString(),
       },
-      { new: true }
-    );
+    }
 
-    // 4. Update appointment status
-    const updatedAppointment = await Appointment.findByIdAndUpdate(
+    const order = await razorpay.orders.create(options)
+
+    // Create payment record
+    const payment = new Payment({
       appointmentId,
-      {
-        status: "confirmed",
-        paymentStatus: "completed",
-        paymentId: payment._id,
-      },
-      { new: true }
-    );
+      clientId: req.user.id,
+      consultantId: appointment.consultantId._id,
+      amount: appointment.amount,
+      razorpayOrderId: order.id,
+      status: "pending",
+    })
+
+    await payment.save()
 
     res.json({
-      message: "Payment verified successfully",
-      payment,
-      appointment: updatedAppointment,
-    });
-
-  } catch (err) {
-    console.error("Payment verification error:", err);
-    
-    // Try to update status to failed if something went wrong
-    try {
-      await Appointment.findByIdAndUpdate(appointmentId, {
-        status: "cancelled",
-        paymentStatus: "failed",
-      });
-    } catch (updateErr) {
-      console.error("Failed to update appointment status:", updateErr);
-    }
-
-    res.status(500).json({ 
-      message: "Failed to verify payment", 
-      error: err.message 
-    });
-  }
-});
-
-// @route   GET /api/payments/history/:userId
-// @desc    Get payment history for a user
-// @access  Private (user only)
-router.get("/history/:userId", authMiddleware, async (req, res) => {
-  if (req.user.id !== req.params.userId) {
-    return res.status(403).json({ message: "Unauthorized access" })
-  }
-
-  try {
-    const payments = await Payment.find({ userId: req.params.userId })
-      .populate("appointmentId", "title date time") // Populate relevant appointment details
-      .sort({ createdAt: -1 }) // Sort by most recent
-    res.json(payments)
-  } catch (err) {
-    console.error("Error fetching payment history:", err.message)
-    res.status(500).send("Server error")
+      success: true,
+      order,
+      payment: payment._id,
+    })
+  } catch (error) {
+    console.error("Create order error:", error)
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    })
   }
 })
+
+// Verify payment
+router.post("/verify", authMiddleware, async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, paymentId } = req.body
+
+    // Verify signature
+    const body = razorpay_order_id + "|" + razorpay_payment_id
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(body.toString())
+      .digest("hex")
+
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payment signature",
+      })
+    }
+
+    // Update payment record
+    const payment = await Payment.findById(paymentId)
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message: "Payment record not found",
+      })
+    }
+
+    payment.status = "success"
+    payment.razorpayPaymentId = razorpay_payment_id
+    payment.razorpaySignature = razorpay_signature
+    payment.transactionId = razorpay_payment_id
+
+    await payment.save()
+
+    // Update appointment status
+    await Appointment.findByIdAndUpdate(payment.appointmentId, {
+      status: "confirmed",
+      paymentId: payment._id,
+    })
+
+    res.json({
+      success: true,
+      message: "Payment verified successfully",
+    })
+  } catch (error) {
+    console.error("Verify payment error:", error)
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    })
+  }
+})
+
+// Get payment history
+router.get("/history", authMiddleware, async (req, res) => {
+  try {
+    const query = {}
+    if (req.user.role === "client") {
+      query.clientId = req.user.id
+    } else {
+      query.consultantId = req.user.id
+    }
+
+    const payments = await Payment.find(query)
+      .populate("appointmentId", "date duration")
+      .populate("clientId", "name email")
+      .populate("consultantId", "name email")
+      .sort({ createdAt: -1 })
+
+    res.json({
+      success: true,
+      payments,
+    })
+  } catch (error) {
+    console.error("Get payment history error:", error)
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    })
+  }
+})
+
+// Webhook for payment updates
+router.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  try {
+    const signature = req.headers["x-razorpay-signature"]
+    const body = req.body
+
+    // Verify webhook signature
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_WEBHOOK_SECRET)
+      .update(body)
+      .digest("hex")
+
+    if (signature !== expectedSignature) {
+      return res.status(400).json({ error: "Invalid signature" })
+    }
+
+    const event = JSON.parse(body)
+
+    // Handle different webhook events
+    switch (event.event) {
+      case "payment.captured":
+        await handlePaymentCaptured(event.payload.payment.entity)
+        break
+      case "payment.failed":
+        await handlePaymentFailed(event.payload.payment.entity)
+        break
+      default:
+        console.log(`Unhandled event type: ${event.event}`)
+    }
+
+    res.json({ received: true })
+  } catch (error) {
+    console.error("Webhook error:", error)
+    res.status(500).json({ error: "Webhook handler failed" })
+  }
+})
+
+// Helper functions
+const handlePaymentCaptured = async (paymentData) => {
+  try {
+    const payment = await Payment.findOne({ razorpayOrderId: paymentData.order_id })
+    if (payment) {
+      payment.status = "success"
+      payment.razorpayPaymentId = paymentData.id
+      await payment.save()
+
+      // Update appointment
+      await Appointment.findByIdAndUpdate(payment.appointmentId, {
+        status: "confirmed",
+      })
+    }
+  } catch (error) {
+    console.error("Handle payment captured error:", error)
+  }
+}
+
+const handlePaymentFailed = async (paymentData) => {
+  try {
+    const payment = await Payment.findOne({ razorpayOrderId: paymentData.order_id })
+    if (payment) {
+      payment.status = "failed"
+      await payment.save()
+    }
+  } catch (error) {
+    console.error("Handle payment failed error:", error)
+  }
+}
 
 export default router

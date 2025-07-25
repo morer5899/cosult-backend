@@ -41,7 +41,7 @@ const httpServer = createServer(app)
 // Enhanced Socket.IO server configuration
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.FRONTEND_URL || "http://localhost:5173"  ,
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
   },
@@ -108,7 +108,6 @@ function removeUserFromRoom(socketId) {
     if (room.connections.has(socketId)) {
       room.participants.delete(sessionId)
       room.connections.delete(socketId)
-
       console.log(`✅ Session ${sessionId} removed from room ${roomId}`)
 
       // Notify others in room about user leaving
@@ -259,6 +258,7 @@ io.on("connection", (socket) => {
             forwardedCount++
           }
         })
+
         // Only log every 10th candidate to reduce spam
         if (Math.random() < 0.1) {
           console.log(`🧊 ICE candidate (${candidateType}) forwarded to ${forwardedCount} participants`)

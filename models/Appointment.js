@@ -1,69 +1,58 @@
 import mongoose from "mongoose"
 
-const appointmentSchema = new mongoose.Schema({
-  clientId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
+const appointmentSchema = new mongoose.Schema(
+  {
+    clientId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    consultantId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    date: {
+      type: Date,
+      required: true,
+    },
+    duration: {
+      type: Number,
+      required: true,
+      default: 60, // minutes
+    },
+    status: {
+      type: String,
+      enum: ["pending", "confirmed", "cancelled", "completed"],
+      default: "pending",
+    },
+    notes: {
+      type: String,
+    },
+    meetingLink: {
+      type: String,
+    },
+    paymentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Payment",
+    },
+    amount: {
+      type: Number,
+      required: true,
+    },
+    // Video call room ID
+    roomId: {
+      type: String,
+    },
   },
-  consultantId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
+  {
+    timestamps: true,
   },
-  title: {
-    type: String,
-    required: true,
-    trim: true,
-  },
-  description: {
-    type: String,
-    trim: true,
-  },
-  date: {
-    type: Date,
-    required: true,
-  },
-  time: {
-    type: String,
-    required: true,
-  },
-  duration: {
-    type: Number,
-    required: true,
-  },
-  status: {
-    type: String,
-    enum: ["pending", "confirmed", "completed", "cancelled"],
-    default: "pending",
-  },
-  paymentStatus: {
-    type: String,
-    enum: ["pending", "completed", "failed", "refunded"],
-    default: "pending",
-  },
-  meetingLink: {
-    type: String,
-    default: "https://meet.google.com/abc-xyz-123",
-  },
-  paymentId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Payment",
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now,
-  },
-});
+)
 
-// Update timestamp on save
-appointmentSchema.pre("save", function(next) {
-  this.updatedAt = Date.now();
-  next();
-});
+// Index for better query performance
+appointmentSchema.index({ clientId: 1, date: 1 })
+appointmentSchema.index({ consultantId: 1, date: 1 })
+appointmentSchema.index({ status: 1 })
 
-export default mongoose.model("Appointment", appointmentSchema);
+export default mongoose.model("Appointment", appointmentSchema)
